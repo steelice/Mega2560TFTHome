@@ -1,0 +1,6 @@
+{
+  "name": "Mega2560tfthome",
+  "tagline": "Another «smart» home kit with Arduino Mega 2560, TFT LCD screen, nRF24L01, ESP8266 and some sensors compilation",
+  "body": "# Mega2560TFTHome\r\nAnother «smart» home kit with Arduino Mega 2560, TFT LCD screen, nRF24L01, ESP8266 and some sensors compilation\r\n\r\n\r\n![Typical schematics](https://github.com/steelice/Mega2560TFTHome/raw/master/Hardware/typical_bb.png?raw=true \"Typical schematics\")\r\n\r\n",
+  "note": "Don't delete this file! It's used internally to help with page regeneration."
+}
