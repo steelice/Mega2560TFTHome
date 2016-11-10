@@ -1,9 +1,9 @@
 #include <IRremote.h>
 #include <IRremoteInt.h>
-#include <MyIRDefs.h>
+#include "MyIRDefs.h"
 
-#include <RunningMedian.h>
-#include <mhTemperature.h>
+#include "RunningMedian.h"
+#include "mhTemperature.h"
 
 #include <Time.h>
 #include <TimeLib.h>
@@ -21,11 +21,11 @@
 #include <Adafruit_BMP085_U.h>
 
 
-#include <HistoryWorker.h>
+#include "HistoryWorker.h"
 
 #include <Agenda.h>
 
-#include <SunMoon.h>
+#include "SunMoon.h"
 
 #include <OneWire.h>
 
@@ -65,7 +65,7 @@ byte currentWindow = WINDOW_MAIN;
 
 extern uint8_t BigFont[];
 extern uint8_t SixteenSegment40x60[];
-extern uint8_t SixteenSegment32x48[];
+extern uint8_t GroteskBold24x48[];
 extern uint8_t Ubuntu[];
 extern uint8_t SmallFont[];
 extern uint8_t various_symbols[];
@@ -149,6 +149,7 @@ void setup() {
 unsigned long i = 100000;
 unsigned long mi = 0;
 void loop() {
+  
 	// myGLCD.clrScr();
 	mi = millis();
 	showTime();
@@ -230,13 +231,14 @@ void showTemperature(){
 
 	if(currentWindow == WINDOW_MAIN) {
 
-		myGLCD.setFont(SixteenSegment32x48);
+		myGLCD.setFont(GroteskBold24x48);
 		myGLCD.setColor(100, 200, 100);
 		myGLCD.setBackColor(0, 0, 0);
 		
 		myGLCD.printNumF(getInTemp(), 1, 20, 170);
 		myGLCD.print(F("g"), 148, 170);
 
+		myGLCD.setFont(GroteskBold24x48);
 		TempSensor out = getOutTemp();
 		float outTemp;
 		if(out.working && (median_temp_out.getMedian(outTemp) == median_temp_out.OK)){
