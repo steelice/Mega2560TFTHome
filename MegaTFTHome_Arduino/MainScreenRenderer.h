@@ -18,7 +18,7 @@ extern uint8_t SmallFont[];
 #define BALLOON_Y 16
 #define BALLOON_HEIGHT 280
 #define BALLOON_WIDTH 10
-#define BALLOON_TRICK_WIDTH 4
+#define BALLOON_TRICK_WIDTH 6
 
 
 class MainScreenRenderer : public Renderer
@@ -29,8 +29,8 @@ public:
 	void redraw(){
 		screen->clrScr();
 		
-		preDrawHgBalloon(0, 40, 450, 466);
-		preDrawHgBalloon(0, 40, 26, 11);
+		preDrawHgBalloon(0, 40, 448, 464);
+		preDrawHgBalloon(0, 40, 26, 3);
 
 		drawTime();
 		drawTemp();
@@ -46,7 +46,7 @@ public:
 	void onNewMinute(byte minute){
 		drawTemp();
 		drawPressure();
-		if(minute % 5 == 0) drawSun();
+		if(minute % 10 == 0) drawSun();
 	}
 	void onNewHour(byte hour){
 	
@@ -131,7 +131,7 @@ public:
 			data->getMin(HISTORY_TEMP_IN).value, data->getMax(HISTORY_TEMP_IN).value, 26);
 
 		drawHgBalloon(data->getSensorValue(SENSOR_TEMP_OUT), 
-			data->getMin(HISTORY_TEMP_OUT).value, data->getMax(HISTORY_TEMP_OUT).value, 450);
+			data->getMin(HISTORY_TEMP_OUT).value, data->getMax(HISTORY_TEMP_OUT).value, 448);
 	}
 
 	void drawPressure(){
@@ -148,18 +148,19 @@ public:
 		sd->load(207, 10, 63, 13, "mname_"+String(date.Month)+".raw");
 	}
 
-	void preDrawHgBalloon(int tFrom, int tTo, unsigned int x, unsigned int xLabel){
-		screen->setColor(99, 99, 99);
-		for(int C = tFrom; C <= tTo; C++){
-			screen->drawLine(x - BALLOON_TRICK_WIDTH, 
-					(BALLOON_HEIGHT + BALLOON_Y) - ((BALLOON_HEIGHT / (float)(tTo - tFrom*1.0)) * C * 1.0 ),
-					x + (BALLOON_TRICK_WIDTH*2) + BALLOON_WIDTH,
-					(BALLOON_HEIGHT + BALLOON_Y) - ((BALLOON_HEIGHT / (float)(tTo - tFrom*1.0)) * C * 1.0 ));
+	void preDrawHgBalloon(byte tFrom, byte tTo, unsigned int x, unsigned int xLabel){
+		screen->setFont(SmallFont);
+
+		for(byte C = tFrom; C <= tTo; C++){
+			screen->setColor(99, 99, 99);
+			unsigned int y = (BALLOON_HEIGHT + BALLOON_Y) - ((BALLOON_HEIGHT / (float)(tTo - tFrom*1.0)) * C * 1.0 );
+			screen->drawLine(x - BALLOON_TRICK_WIDTH, y,
+					x + (BALLOON_TRICK_WIDTH) + BALLOON_WIDTH, y);
 			if(C % 5 == 0){
-				screen->drawLine(x - BALLOON_TRICK_WIDTH, 
-					(BALLOON_HEIGHT + BALLOON_Y) - ((BALLOON_HEIGHT / (float)(tTo - tFrom*1.0)) * C * 1.0 ) - 1,
-					x + (BALLOON_TRICK_WIDTH*2) + BALLOON_WIDTH,
-					(BALLOON_HEIGHT + BALLOON_Y) - ((BALLOON_HEIGHT / (float)(tTo - tFrom*1.0)) * C * 1.0 ) - 1);
+				screen->drawLine(x - BALLOON_TRICK_WIDTH, y - 1,
+					x + (BALLOON_TRICK_WIDTH) + BALLOON_WIDTH, y - 1);
+				screen->setColor(255, 255, 255);
+				screen->printNumI(C, xLabel, y - 4);
 			}
 		}
 

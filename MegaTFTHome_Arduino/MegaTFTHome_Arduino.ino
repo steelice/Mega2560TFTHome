@@ -147,7 +147,6 @@ void loop() {
 	}
 }
 
-
 void showTime(){
 	return;
 	if(currentWindow == WINDOW_MAIN){
@@ -468,7 +467,6 @@ void redrawWindow_calendar() {
 			row++;
 		}
 	}
-
 }
 
 void drawHistory(struct FloatPoint * arr, byte cr, byte cg, byte cb){
