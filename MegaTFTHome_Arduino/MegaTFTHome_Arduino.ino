@@ -3,7 +3,6 @@
 #include "MyIRDefs.h"
 
 #include "RunningMedian.h"
-#include "mhTemperature.h"
 
 #include <Time.h>
 #include <TimeLib.h>
@@ -14,50 +13,40 @@
 
 #include <DS3231.h>
 
-#include <Adafruit_Sensor.h>
-#include <DHT.h>
-#include <DHT_U.h>
-#include <Wire.h>
-#include <Adafruit_BMP085_U.h>
-
-
 #include "HistoryWorker.h"
 
 #include <Agenda.h>
 
 #include "SunMoon.h"
 
-#include <OneWire.h>
+#include "DataCollector.h"
 
 #include <SPI.h>
 #include "RF24.h"
 
-RF24 radio(9,10);
+#include "Renderer.h"
+#include "MainScreenRenderer.h"
 
+RF24 radio(9,10);
 
 #define TEMP_HISTORY_SIZE 144
 
 
-
-#define DHTPIN            2         // Pin which is connected to the DHT sensor.
-#define DHTTYPE           DHT22     // DHT 22 (AM2302)
-
 #define IR_RECV_PIN 3
 
-DHT_Unified dht(DHTPIN, DHTTYPE);
-
 #define PRESSURE_HISTORY_SIZE 144
-Adafruit_BMP085_Unified bmp = Adafruit_BMP085_Unified(10085);
+
 
 DS3231  rtc(SDA, SCL);
 
 #define SD_CHIP_SELECT  53
 
-#define WINDOW_MAIN 1
-#define WINDOW_TEMP 2
-#define WINDOW_TEMP_OUT 3
-#define WINDOW_CALENDAR 4
-#define WINDOW_COUNT 4
+#define WINDOW_MAIN 0
+#define WINDOW_TEMP 1
+#define WINDOW_TEMP_OUT 2
+#define WINDOW_CALENDAR 3
+
+#define WINDOWS_COUNT 4
 
 byte currentWindow = WINDOW_MAIN;
 
@@ -71,14 +60,6 @@ extern uint8_t SmallFont[];
 extern uint8_t various_symbols[];
 
 
-
-TempPoint maxInTemp;
-TempPoint minInTemp;
-
-HistoryWorker<TempPoint, TEMP_HISTORY_SIZE> tempInHistory;
-HistoryWorker<TempPoint, TEMP_HISTORY_SIZE> tempOutHistory;
-HistoryWorker<TempPoint, TEMP_HISTORY_SIZE> pressureHistory;
-
 UTFT myGLCD(ILI9481, 38, 39, 40, 41);
 SdFat sd;
 UTFT_SdRaw myFiles(&myGLCD);
@@ -88,13 +69,12 @@ Agenda scheduler;
 IRrecv irrecv(IR_RECV_PIN);
 decode_results IR_results;
 
-SunMoon sun_moon(42.452452, 18.5463489, 1);
+DataCollector allData;
 
-OneWire  dallas(4);
-byte dallas_addr[8] = {0x28,0x33,0x93,0x5D,0x5,0x0,0x0,0x23};
+Renderer * windows[WINDOWS_COUNT];
 
-RunningMedian<float, 6> median_temp_out;	
-RunningMedian<float, 6> median_pressure;	
+TimeElements curTE;
+TimeElements lastTE;
 
 void setup() {	
 
@@ -105,49 +85,38 @@ void setup() {
 	myGLCD.setFont(Ubuntu);
 	myGLCD.print(F("Loading..."), CENTER, 150);
 
-	dallas.reset();
-	dallas.select(dallas_addr);
-	dallas.write(0x44); 
-
 	while (!sd.begin(SD_CHIP_SELECT)) {
     
   	}
 
   	Serial.begin(115200);
 	rtc.begin();
-	dht.begin();
-	bmp.begin();
+	allData.initSensors();
 	radio.begin();
   	irrecv.enableIRIn();
   	
   	setTime(rtc.getUnixTime(rtc.getTime()));
 
-  // myFiles.load(0, 0, 480, 320, "temp.raw");
+  	delay(500);
+  	allData.parseAll();
 
-  // showTemperature(19.1, 12.3);
-  // showMoonSun();
-  // showFinance();
-  // showFuel();
+	scheduler.insert(parseSensors, 30000000);
+	scheduler.insert(showTemperature, 60000000);
 
+	windows[WINDOW_MAIN] = new MainScreenRenderer(&myGLCD, &myFiles, &allData);
 
+	windows[currentWindow]->redraw();
 
-  getOutTemp();
+	// Serial.println(F("Clock started!"));
 
-  saveTemp();
-  scheduler.insert(saveTemp, 600000000);
-  scheduler.insert(showTemperature, 60000000);
+	
 
-  redrawCurWindow();
-
-  Serial.println("Clock started!");
-
-  sun_moon.getTimes(now());
-
+	breakTime(now(), curTE);
+	lastTE = curTE;
 }
 
-
-unsigned long i = 100000;
 unsigned long mi = 0;
+
 void loop() {
   
 	// myGLCD.clrScr();
@@ -157,10 +126,30 @@ void loop() {
 	while(mi >= millis() - 1000){
 		receiveIR();
 		scheduler.update();
+		allData.saveHistoryTick();
+		breakTime(now(), curTE);
+
+		if(curTE.Second == lastTE.Second) continue;
+
+		windows[currentWindow]->onNewSecond(curTE.Second);
+		if(curTE.Minute != lastTE.Minute){
+			windows[currentWindow]->onNewMinute(curTE.Minute);
+			if(curTE.Hour != lastTE.Hour){
+				windows[currentWindow]->onNewHour(curTE.Hour);
+				if(curTE.Day != lastTE.Day){
+					windows[currentWindow]->onNewDay(curTE.Day);
+				}
+			}
+			setTime(rtc.getUnixTime(rtc.getTime()));
+		}
+
+		lastTE = curTE;
 	}
 }
 
+
 void showTime(){
+	return;
 	if(currentWindow == WINDOW_MAIN){
 		myGLCD.setFont(SixteenSegment40x60);
 		myGLCD.setColor(255, 255, 255);
@@ -189,7 +178,7 @@ void receiveIR(){
 		switch(IR_results.value){
 			case IR_FUEGO_SCREEN_UP_DOWN:
 				currentWindow++;
-				if(currentWindow > WINDOW_COUNT) currentWindow = WINDOW_MAIN;
+				if(currentWindow > WINDOWS_COUNT) currentWindow = WINDOW_MAIN;
 				redrawCurWindow();
 			break;
 			case IR_FUEGO_TIMER:
@@ -204,77 +193,23 @@ void receiveIR(){
 }
 
 float getInTemp(){
-	sensors_event_t event;  
-	dht.temperature().getEvent(&event);
-	return isnan(event.temperature) ? 0 : (float) (event.temperature);
+	return allData.getSensorValue(SENSOR_TEMP_IN);
 }
 
 float getPressure(){
-	sensors_event_t event;
-  	bmp.getEvent(&event);
-  	if (event.pressure)
-  	{
-  		median_pressure.add(event.pressure / 1.333224);
-  		return event.pressure / 1.333224;
-  	}
-
-  	return 0;
+  	return allData.getSensorValue(SENSOR_PRESSURE);
 }	
 
 float getInHumidity(){
-	sensors_event_t event;
-	dht.humidity().getEvent(&event);
-	return isnan(event.relative_humidity) ? 0 : (float) (event.relative_humidity);
+	return allData.getSensorValue(SENSOR_HUMIDITY);
 }
 
 void showTemperature(){
+	return;
 
 	if(currentWindow == WINDOW_MAIN) {
 
-		myGLCD.setFont(GroteskBold24x48);
-		myGLCD.setColor(100, 200, 100);
-		myGLCD.setBackColor(0, 0, 0);
 		
-		myGLCD.printNumF(getInTemp(), 1, 20, 170);
-		myGLCD.print(F("g"), 148, 170);
-
-		myGLCD.setFont(GroteskBold24x48);
-		TempSensor out = getOutTemp();
-		float outTemp;
-		if(out.working && (median_temp_out.getMedian(outTemp) == median_temp_out.OK)){
-			myGLCD.setColor(100, 200, 200);
-			myGLCD.printNumF(outTemp, 1, 220, 170);
-			myGLCD.print(F("g"), 348, 170);
-		}else{
-			myGLCD.setBackColor(255, 0, 0);
-			myGLCD.printNumF(out.temperature, 1, 220, 170);
-			myGLCD.print(F("g"), 348, 170);
-			myGLCD.setBackColor(0, 0, 0);
-		}
-
-
-
-		myGLCD.setColor(100, 100, 200);
-		myGLCD.printNumI((int)getInHumidity(), 20, 250); 
-		myGLCD.print("%", 84, 250); 
-
-		myGLCD.printNumF(getPressure(), 1, 150, 250);
-		myGLCD.print("MM", 312, 250);
-
-
-		// myGLCD.setColor(100, 200, 100);
-		// TempPoint m = tempInHistory.getMax();
-		// if(m.time){
-		// 	myGLCD.setFont(SmallFont);
-		// 	myGLCD.print("Max:" + String(m.value) + " (" + getTimeStr(m.time, false) + ")", 330, 175);
-		// }
-
-		// m = tempInHistory.getMin();
-		// if(m.time){
-		// 	myGLCD.setFont(SmallFont);
-		// 	myGLCD.print("Min:" + String(m.value) + " (" + getTimeStr(m.time, false) + ")", 330, 190);
-		// }
-
 	}else if(currentWindow == WINDOW_TEMP){
 		myGLCD.setFont(SixteenSegment40x60);
 		myGLCD.setColor(80, 220, 80);
@@ -289,12 +224,12 @@ void showTemperature(){
 
 		myGLCD.setFont(BigFont);
 		myGLCD.setColor(50, 170, 50);
-		TempPoint m = tempInHistory.getMax();
+		FloatPoint m = allData.getMax(SENSOR_TEMP_IN);
 		if(m.time){
 			myGLCD.print(String(m.value) + " (" + getTimeStr(m.time, false) + ")", 266, 40);
 		}
 
-		m = tempInHistory.getMin();
+		m = allData.getMin(SENSOR_TEMP_IN);
 		if(m.time){
 			myGLCD.print(String(m.value) + " (" + getTimeStr(m.time, false) + ")", 266, 67);
 		}
@@ -303,8 +238,8 @@ void showTemperature(){
 		myGLCD.setFont(SixteenSegment40x60);
 		myGLCD.setColor(80, 220, 220);
 		myGLCD.setBackColor(0, 0, 0);
-		TempSensor s = getOutTemp();
-		myGLCD.print(String(s.temperature)+"g", 20, 32);
+		float s = getOutTemp();
+		myGLCD.print(String(s)+"g", 20, 32);
 
 		myGLCD.setFont(various_symbols);
 		myGLCD.setColor(180, 0, 0);
@@ -314,12 +249,12 @@ void showTemperature(){
 
 		myGLCD.setFont(BigFont);
 		myGLCD.setColor(50, 170, 170);
-		TempPoint m = tempOutHistory.getMax();
+		FloatPoint m = allData.getMax(SENSOR_TEMP_OUT);
 		if(m.time){
 			myGLCD.print(String(m.value) + " (" + getTimeStr(m.time, false) + ")", 266, 40);
 		}
 
-		m = tempOutHistory.getMin();
+		m = allData.getMin(SENSOR_TEMP_OUT);
 		if(m.time){
 			myGLCD.print(String(m.value) + " (" + getTimeStr(m.time, false) + ")", 266, 67);
 		}
@@ -355,67 +290,6 @@ void showTemperature(){
 }
 
 
-void showMoonSun(){
-	myGLCD.setFont(SmallFont);
-	myGLCD.setColor(50, 50, 50);
-	myGLCD.setBackColor(0, 0, 0);
-
-	myGLCD.print("04:00", 85, 230);
-	myGLCD.print("18:06", 85, 242);
-
-	myGLCD.setColor(255, 240, 0);
-	myGLCD.setBackColor(0, 0, 0);
-
-	myGLCD.print("07:12", 190, 230);
-	myGLCD.print("17:41", 190, 242);
-}
-
-void showFinance(){
-	myGLCD.setFont(BigFont);
-	myGLCD.setColor(0, 180, 70);
-	myGLCD.setBackColor(58, 58, 58);
-
-	myGLCD.print("26.12r", 100, 272);
-	myGLCD.print(" 1.09e", 100, 288);
-}
-
-void showFuel(){
-	myGLCD.setFont(BigFont);
-	myGLCD.setColor(255, 128, 0);
-	myGLCD.setBackColor(58, 58, 58);
-
-	myGLCD.print("21.67r", 260, 272);
-	myGLCD.print(" 1.12e", 260, 288);
-
-}
-
-
-void saveTemp(){
-	TempPoint p = {rtc.getUnixTime(rtc.getTime()), getInTemp()};
-	tempInHistory.push(p);
-
-	/**
-	 * Save out temperature
-	 * @type {[type]}
-	 */
-	TempSensor s = getOutTemp();
-	float t;
-	if(s.working && (median_temp_out.getMedian(t) == median_temp_out.OK)){
-		p.value = t;
-		tempOutHistory.push(p);
-	}
-
-	/**
-	 * Save pressure
-	 * 
-	 */	
-	t = getPressure();
-	if(t > 600 && median_pressure.getMedian(t) == median_pressure.OK){
-		p.value = t;
-		pressureHistory.push(p);
-	}
-}
-
 
 void redrawCurWindow() {
 	myGLCD.clrScr();
@@ -439,9 +313,9 @@ void redrawCurWindow() {
 }
 
 
-void showTemperatureGraph(HistoryWorker<TempPoint, TEMP_HISTORY_SIZE> history, byte colorR, byte colorG, byte colorB, float curTemp){
-	TempPoint max = history.getMax();
-	TempPoint min = history.getMin();
+void showTemperatureGraph(HistoryWorker<FloatPoint, HISTORY_SIZE> history, byte colorR, byte colorG, byte colorB, float curTemp){
+	FloatPoint max = history.getMax();
+	FloatPoint min = history.getMin();
 	if(!max.time || !min.time) return;
 
 	float step = 400.0 / history.size();
@@ -452,7 +326,7 @@ void showTemperatureGraph(HistoryWorker<TempPoint, TEMP_HISTORY_SIZE> history, b
 	history.reset();
 
 	myGLCD.setColor(colorR, colorG, colorB);
-	TempPoint p = history.each();
+	FloatPoint p = history.each();
 	int i = 0;
 	float pxPerC = 200.0 / (max.value - min.value + 7.0);
 	bool drawedMidnight = false, drawedHalfday = false;
@@ -508,7 +382,7 @@ void redrawWindow_temp() {
 
 	showTemperature();
 
-	showTemperatureGraph(tempInHistory, 20, 200, 20, getInTemp());
+	showTemperatureGraph(allData.getHistory(SENSOR_TEMP_IN), 20, 200, 20, getInTemp());
 }
 
 void redrawWindow_tempout() {
@@ -518,9 +392,8 @@ void redrawWindow_tempout() {
 
 	showTemperature();
 
-	showTemperatureGraph(tempOutHistory, 20, 200, 200, getOutTemp().temperature);
+	showTemperatureGraph(allData.getHistory(SENSOR_TEMP_OUT), 20, 200, 200, getOutTemp());
 }
-
 
 #define CAL_CELL_WIDTH 40
 #define CAL_CELL_HEIGHT 44
@@ -536,7 +409,6 @@ void redrawWindow_tempout() {
 #define LEAP_YEAR(Y)     ( ((1970+Y)>0) && !((1970+Y)%4) && ( ((1970+Y)%100) || !((1970+Y)%400) ) )
 
 static  const uint8_t monthDays[]={31,28,31,30,31,30,31,31,30,31,30,31}; // API starts months from 1, this array starts from 0
-
 
 char* shortDays[7] = {"Mo", "Th", "We", "Th", "Fr", "Sa", "Su"};
 
@@ -567,7 +439,7 @@ void redrawWindow_calendar() {
 	time_t firstDay = makeTime(te);
 	breakTime(firstDay, te);
 
-	// уебанская библиотека, 1 у них это воскресенье
+	// уебанская библиотека, 0 это суббота, 1 у них это воскресенье
 	byte startD = te.Wday >= 2 ? te.Wday - 2 : te.Wday + 5;
 
 	byte row = 1;
@@ -597,25 +469,9 @@ void redrawWindow_calendar() {
 		}
 	}
 
-
-	timesInfo sun = sun_moon.getTimes(now());
-
-	myGLCD.setColor(200, 200, 80);
-	myGLCD.setFont(BigFont);
-	myGLCD.print(getTimeStr(sun.rise, false), CAL_WIDTH + CAL_PADD_W * 3+ 18, 40);
-	myGLCD.print(getTimeStr(sun.set, false), CAL_WIDTH + CAL_PADD_W * 3 + 18, 62);
-
-	myGLCD.setFont(various_symbols);
-	myGLCD.print("=", CAL_WIDTH + CAL_PADD_W * 3, 40);
-	myGLCD.print(">", CAL_WIDTH + CAL_PADD_W * 3, 62);
-
-
-
-
 }
 
-
-void drawHistory(struct TempPoint * arr, byte cr, byte cg, byte cb){
+void drawHistory(struct FloatPoint * arr, byte cr, byte cg, byte cb){
 	int step = 400 / TEMP_HISTORY_SIZE;
 	myGLCD.setColor(cr,cg,cb);
 	for(int i = 1; i < TEMP_HISTORY_SIZE; i++){
@@ -643,68 +499,10 @@ String getTimeStr(time_t t, bool showSeconds){
 }
 
 
-TempSensor getOutTemp(){
-	byte i;
-	byte present = 0;
-	byte type_s = 0;
-	byte data[9];
+float getOutTemp(){
+  	return allData.getSensorValue(SENSOR_TEMP_OUT);
+}
 
-
-  	TempSensor result = {TEMP_ID_OUT1, millis(), false, 0, 0, TEMP_SENSOR_EXTENRAL};
-
-  	dallas.reset();
-	dallas.select(dallas_addr);
-	dallas.write(0x44); 
-  
-  present = dallas.reset();
-      // Read Scratchpad
-
-  if(present != 1){
-  	Serial.println(F("  Dallas not present! "));
-  	return result;
-  }
-
-  dallas.select(dallas_addr);    
-  dallas.write(0xBE);     
-  Serial.print(F("Getting data "));
-  for ( i = 0; i < 9; i++) {           // we need 9 bytes
-    data[i] = dallas.read();
-  }
-
-  if(OneWire::crc8(data, 8) != data[8]){
-  	Serial.println(F(" CRC of dallas not correct! "));
-  	return result;
-  }
-  
-
-  // Convert the data to actual temperature
-  // because the result is a 16 bit signed integer, it should
-  // be stored to an "int16_t" type, which is always 16 bits
-  // even when compiled on a 32 bit processor.
-  int16_t raw = (data[1] << 8) | data[0];
-  if (type_s) {
-    raw = raw << 3; // 9 bit resolution default
-    if (data[7] == 0x10) {
-      // "count remain" gives full 12 bit resolution
-      raw = (raw & 0xFFF0) + 12 - data[6];
-    }
-  } else {
-    byte cfg = (data[4] & 0x60);
-    // at lower res, the low bits are undefined, so let's zero them
-    if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
-    else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
-    else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
-    //// default is 12 bit resolution, 750 ms conversion time
-  }
-  
-  result.temperature = (float)raw / 16.0;
-  result.working = true;
-
-  Serial.println("Out temperature is OK: " + String(result.temperature));
-
-  median_temp_out.add(result.temperature);
-
-  
-  return result;
-
+void parseSensors(){
+	allData.parseAll();
 }
